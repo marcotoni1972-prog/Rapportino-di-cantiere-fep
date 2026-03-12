@@ -631,38 +631,21 @@ function pickBestVoice(){
 }
 
 function speak(text, cb){
-  permDeaf = true;   // sordiciamo il mic PRIMA ancora di parlare
-  permAccum = ""; permInterim = ""; clearTimeout(permSilTimer);
-  if(!synthOK){ setTimeout(()=>{ permDeaf=false; if(cb)cb(); }, 60); return; }
+  permDeaf = true;
+  if(!synthOK){ permDeaf=false; if(cb)setTimeout(cb,60); return; }
   try{
     window.speechSynthesis.cancel();
-
     const u = new SpeechSynthesisUtterance(text);
-    u.lang  = "it-IT";
-    u.rate  = 1.05;
-    u.pitch = 1.0;
-    u.volume= 1.0;
+    u.lang="it-IT"; u.rate=1.05; u.pitch=1.0; u.volume=1.0;
     const voice = pickBestVoice();
     if(voice) u.voice = voice;
 
-    const afterSpeak = ()=>{
-      // Svuota accumulo e interim PRIMA di riabilitare il mic
-      permAccum   = "";
-      permInterim = "";
-      clearTimeout(permSilTimer);
-      // Pausa di 400ms dopo la fine del TTS: evita eco e code audio
-      setTimeout(()=>{
-        permDeaf = false;
-        // Ora che il mic è abilitato, armiamo il timer di silenzio reale
-        if(permListening && permCallback){
-          permArmSilence(permCallback.isCount ? 6000 : 14000);
-        }
-        if(cb) cb();
-      }, 400);
+    const done = ()=>{
+      permDeaf = false;
+      if(cb) setTimeout(cb, 300); // 300ms pausa dopo fine TTS prima di aprire mic
     };
-
-    u.onend  = afterSpeak;
-    u.onerror= afterSpeak;
+    u.onend  = done;
+    u.onerror= done;
     window.speechSynthesis.speak(u);
 
     const ki = setInterval(()=>{
@@ -672,7 +655,7 @@ function speak(text, cb){
     }, 9000);
   }catch(e){
     permDeaf = false;
-    if(cb)setTimeout(cb,80);
+    if(cb) setTimeout(cb, 80);
   }
 }
 
@@ -911,61 +894,57 @@ function wizAsk(){
   const step = wizSteps[wizIdx];
   const isCount = !!step.isCount;
 
-  // Resetta la trascrizione per questa domanda
+  // Reset UI e stato
   setTrans("", true);
   document.getElementById("wiz-interim").textContent = "";
   document.getElementById("wbtn-confirm").disabled = true;
   setWizMic("asking");
   document.getElementById("wiz-status").textContent = "🔊 Leggo la domanda...";
 
-  // Arma l'ascolto PRIMA di speak — ma permDeaf=true blocca tutto fino a fine TTS
-  permDeaf = true;
-  clearTimeout(permSilTimer);
-  permAccum = ""; permInterim = "";
-  permListening = true;
-  permCallback = {
-    onResult: (final)=>{
-      setTrans(final, false);
-      document.getElementById("wiz-interim").textContent = "";
-      setWizMic("ok");
-      if(isCount){
-        const n = parseCount(final);
-        if(n >= 0){
-          document.getElementById("wiz-status").textContent = `✅ ${n} — confermo`;
-          document.getElementById("wbtn-confirm").disabled = false;
-          setTimeout(()=> wizConfirm(), 600);
-          return;
-        }
-        document.getElementById("wiz-status").textContent = `⚠️ Ho sentito "${final}" — premi ✓ o 🔄`;
-      } else {
-        document.getElementById("wiz-status").textContent = "✅ Conferma o riprova";
-      }
-      document.getElementById("wbtn-confirm").disabled = false;
-    },
-    onInterim: (interim)=>{
-      document.getElementById("wiz-interim").textContent = interim;
-      if(isCount){
-        const n = parseCount(interim);
-        if(n >= 0) document.getElementById("wiz-interim").textContent = `${interim}  →  ${n}`;
-      }
-    },
-    onError: (err)=>{
-      setWizMic("idle");
-      document.getElementById("wiz-interim").textContent = "";
-      if(err === "not-allowed") document.getElementById("wiz-status").textContent = "❌ Microfono bloccato";
-      else document.getElementById("wiz-status").textContent = "⚠️ Premi 🎙 per riprovare";
-    },
-    isCount
-  };
-  if(!permRec) permStart();
+  // Ferma qualsiasi ascolto precedente
+  stopRec();
 
-  // Legge la domanda — alla fine toglie permDeaf e arma il timer vero
+  // Legge la domanda — SOLO DOPO che finisce apre il microfono
   speak(step.q, ()=>{
     setWizMic("rec");
     document.getElementById("wiz-status").textContent = isCount
       ? "🔴 Di' il numero..."
       : "🔴 In ascolto...";
-    // permDeaf è già false grazie a speak/afterSpeak — il timer è già armato
+
+    listenOnce(
+      (final)=>{
+        setTrans(final, false);
+        document.getElementById("wiz-interim").textContent = "";
+        setWizMic("ok");
+        if(isCount){
+          const n = parseCount(final);
+          if(n >= 0){
+            document.getElementById("wiz-status").textContent = `✅ ${n} — confermo`;
+            document.getElementById("wbtn-confirm").disabled = false;
+            setTimeout(()=> wizConfirm(), 600);
+            return;
+          }
+          document.getElementById("wiz-status").textContent = `⚠️ Ho sentito "${final}" — premi ✓ o 🔄`;
+        } else {
+          document.getElementById("wiz-status").textContent = "✅ Conferma o riprova";
+        }
+        document.getElementById("wbtn-confirm").disabled = false;
+      },
+      (interim)=>{
+        document.getElementById("wiz-interim").textContent = interim;
+        if(isCount){
+          const n = parseCount(interim);
+          if(n >= 0) document.getElementById("wiz-interim").textContent = `${interim}  →  ${n}`;
+        }
+      },
+      (err)=>{
+        setWizMic("idle");
+        document.getElementById("wiz-interim").textContent = "";
+        if(err === "not-allowed") document.getElementById("wiz-status").textContent = "❌ Microfono bloccato";
+        else document.getElementById("wiz-status").textContent = "⚠️ Premi 🎙 per riprovare";
+      },
+      isCount
+    );
   });
 }
 
