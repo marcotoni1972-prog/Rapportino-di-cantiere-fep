@@ -553,13 +553,13 @@ function listenOnce(onResult, onInterim, onError, isCount){
           // numero: consegna subito se valido
           const n = parseCount(accumFinal.trim());
           if(n>=0){ deliver(accumFinal.trim()); return; }
-          // numero non riconosciuto: aspetta ancora 1s
+          // numero non riconosciuto: aspetta ancora 2s
           clearTimeout(permSilTimer);
-          permSilTimer = setTimeout(()=> deliver(accumFinal.trim()), 1000);
+          permSilTimer = setTimeout(()=> deliver(accumFinal.trim()), 2000);
         } else {
-          // testo libero: piccola pausa per eventuali parole finali
+          // testo libero: aspetta 2.5s di silenzio prima di consegnare
           clearTimeout(permSilTimer);
-          permSilTimer = setTimeout(()=> deliver(accumFinal.trim()), 800);
+          permSilTimer = setTimeout(()=> deliver(accumFinal.trim()), 2500);
         }
       }
     };
@@ -576,8 +576,26 @@ function listenOnce(onResult, onInterim, onError, isCount){
 
     rec.onend = ()=>{
       permRec = null;
-      if(!delivered && accumFinal.trim()) deliver(accumFinal.trim());
-      // Nessun riavvio automatico
+      if(delivered) return;
+      if(isCount && accumFinal.trim()){
+        // per i numeri: consegna quello che abbiamo
+        deliver(accumFinal.trim());
+      } else if(!isCount && !delivered){
+        // per il testo: riapri il SR una volta sola per continuare ad ascoltare
+        // (su Android il SR si chiude dopo ogni pausa)
+        if(permCallback){
+          const rec2 = new SR();
+          rec2.lang="it-IT"; rec2.continuous=false; rec2.interimResults=true; rec2.maxAlternatives=1;
+          permRec = rec2;
+          rec2.onresult = rec.onresult;
+          rec2.onerror  = (e)=>{ permRec=null; if(!delivered) deliver(accumFinal.trim()); };
+          rec2.onend    = ()=>{ permRec=null; if(!delivered) deliver(accumFinal.trim()); };
+          try{ rec2.start(); }
+          catch(e){ if(!delivered) deliver(accumFinal.trim()); }
+        } else {
+          deliver(accumFinal.trim());
+        }
+      }
     };
 
     try{ rec.start(); }
