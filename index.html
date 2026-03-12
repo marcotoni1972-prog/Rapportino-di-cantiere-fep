@@ -493,6 +493,7 @@ async function requestMicThenStart(){
 // ══════════════════════════════════════════════════════
 let permRec       = null;   // istanza SR sempre accesa
 let permListening = false;  // stiamo aspettando una risposta?
+let permDeaf      = false;  // sordo mentre la sintesi parla
 let permCallback  = null;   // { onResult, onInterim, onError, isCount }
 let permAccum     = "";
 let permInterim   = "";
@@ -508,7 +509,7 @@ function permStart(){
   rec.maxAlternatives= 1;
 
   rec.onresult = (e)=>{
-    if(!permListening) return;
+    if(!permListening || permDeaf) return;  // ignora mentre la sintesi parla
     let interim = "";
     for(let i = e.resultIndex; i < e.results.length; i++){
       if(e.results[i].isFinal){
@@ -588,14 +589,14 @@ function permDeliver(txt){
 // API pubblica: inizia ad ascoltare per la prossima risposta
 function listenOnce(onResult, onInterim, onError, isCount){
   if(!SR){ if(onError) onError("not_supported"); return; }
+  // reset completo per questa domanda
   clearTimeout(permSilTimer);
   permAccum     = "";
   permInterim   = "";
+  permDeaf      = false;
   permListening = true;
   permCallback  = { onResult, onInterim, onError, isCount };
-  // avvia il microfono permanente se non è già acceso
   if(!permRec) permStart();
-  // timeout di sicurezza
   permArmSilence(isCount ? 9000 : 16000);
 }
 
@@ -643,27 +644,41 @@ function speak(text, cb){
   if(!synthOK){ if(cb)setTimeout(cb,60); return; }
   try{
     window.speechSynthesis.cancel();
+    permDeaf = true;   // sordiciamo il mic mentre parliamo
+
     const u = new SpeechSynthesisUtterance(text);
     u.lang  = "it-IT";
-    u.rate  = 1.05;   // leggermente più veloce — suona più naturale
+    u.rate  = 1.05;
     u.pitch = 1.0;
     u.volume= 1.0;
-
-    // assegna la voce migliore se disponibile
     const voice = pickBestVoice();
     if(voice) u.voice = voice;
 
-    u.onend  = ()=>{ if(cb)setTimeout(cb,180); };
-    u.onerror= ()=>{ if(cb)setTimeout(cb,180); };
+    const afterSpeak = ()=>{
+      // svuota tutto quello che il mic ha captato durante la lettura
+      permAccum   = "";
+      permInterim = "";
+      clearTimeout(permSilTimer);
+      // piccola pausa prima di riabilitare — evita di captare l'eco finale
+      setTimeout(()=>{
+        permDeaf = false;
+        if(cb) cb();
+      }, 250);
+    };
+
+    u.onend  = afterSpeak;
+    u.onerror= afterSpeak;
     window.speechSynthesis.speak(u);
 
-    // keepalive Chrome (evita che la sintesi si blocchi su frasi lunghe)
     const ki = setInterval(()=>{
       if(!window.speechSynthesis.speaking){ clearInterval(ki); return; }
       window.speechSynthesis.pause();
       window.speechSynthesis.resume();
     }, 9000);
-  }catch(e){ if(cb)setTimeout(cb,80); }
+  }catch(e){
+    permDeaf = false;
+    if(cb)setTimeout(cb,80);
+  }
 }
 
 // Le voci si caricano in modo asincrono — aggiorna quando disponibili
