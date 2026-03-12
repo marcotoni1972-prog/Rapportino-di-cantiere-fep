@@ -498,83 +498,99 @@ let permDeaf      = false;
 function listenOnce(onResult, onInterim, onError, isCount){
   if(!SR){ if(onError) onError("not_supported"); return; }
 
-  // Chiudi eventuale istanza precedente
+  // Chiudi eventuale istanza precedente e aspetta che si chiuda
   if(permRec){ try{ permRec.abort(); }catch(e){} permRec=null; }
   clearTimeout(permSilTimer);
   permCallback = { onResult, onInterim, onError, isCount };
 
-  const rec = new SR();
-  rec.lang="it-IT"; rec.continuous=false; rec.interimResults=true; rec.maxAlternatives=1;
-  permRec = rec;
+  // Pausa 250ms per dare tempo ad Android di chiudere il SR precedente
+  setTimeout(()=>{
+    if(!permCallback) return; // annullato nel frattempo
 
-  let delivered = false;
-  let accumFinal = "";
+    const rec = new SR();
+    rec.lang="it-IT"; rec.continuous=false; rec.interimResults=true; rec.maxAlternatives=1;
+    permRec = rec;
 
-  function deliver(txt){
-    if(delivered) return;
-    delivered = true;
-    clearTimeout(permSilTimer);
-    permRec = null;
-    try{ rec.abort(); }catch(e){}
-    const cb = permCallback; permCallback = null;
-    if(!cb) return;
-    if(txt) cb.onResult(txt);
-    else if(cb.onError) cb.onError("end_no_result");
-  }
+    let delivered = false;
+    let accumFinal = "";
 
-  rec.onresult = (e)=>{
-    if(permDeaf){ deliver(""); return; }
-    let interim = "";
-    for(let i=e.resultIndex; i<e.results.length; i++){
-      if(e.results[i].isFinal) accumFinal += e.results[i][0].transcript + " ";
-      else interim = e.results[i][0].transcript;
-    }
-    const display = (accumFinal + interim).trim();
-
-    if(display && permCallback && permCallback.onInterim){
-      const n = isCount ? parseCount(display) : -1;
-      permCallback.onInterim(n>=0 ? display+"  →  "+n : display);
-    }
-
-    // Numero: consegna subito al primo finale valido
-    if(isCount && accumFinal.trim()){
-      const n = parseCount(accumFinal.trim());
-      if(n>=0){ deliver(accumFinal.trim()); return; }
-    }
-
-    // Testo libero: consegna appena arriva il primo risultato finale
-    if(accumFinal.trim()){
-      // piccola pausa per eventuali parole finali in arrivo
+    function deliver(txt){
+      if(delivered) return;
+      delivered = true;
       clearTimeout(permSilTimer);
-      permSilTimer = setTimeout(()=> deliver(accumFinal.trim()), 800);
+      permRec = null;
+      try{ rec.abort(); }catch(e){}
+      const cb = permCallback; permCallback = null;
+      if(!cb) return;
+      const clean = txt.trim();
+      if(clean) cb.onResult(clean);
+      else if(cb.onError) cb.onError("end_no_result");
     }
-  };
 
-  rec.onerror = (e)=>{
-    permRec = null;
-    if(e.error==="not-allowed"||e.error==="permission-denied"){
-      micOK=false; showBanner();
-      if(permCallback&&permCallback.onError) permCallback.onError("not-allowed");
-      permCallback=null; return;
+    rec.onresult = (e)=>{
+      if(permDeaf){ deliver(""); return; }
+      let interim = "";
+      for(let i=e.resultIndex; i<e.results.length; i++){
+        if(e.results[i].isFinal) accumFinal += e.results[i][0].transcript + " ";
+        else interim = e.results[i][0].transcript;
+      }
+
+      // Mostra interim nell'UI
+      const display = (accumFinal + interim).trim();
+      if(display && permCallback && permCallback.onInterim){
+        if(isCount){
+          // per i numeri mostra solo l'interim — NON consegnare ancora
+          const n = parseCount(display);
+          permCallback.onInterim(n>=0 ? display+"  →  "+n : display);
+        } else {
+          permCallback.onInterim(display);
+        }
+      }
+
+      // Consegna SOLO su risultato finale (non su interim)
+      if(accumFinal.trim()){
+        if(isCount){
+          // numero: consegna subito se valido
+          const n = parseCount(accumFinal.trim());
+          if(n>=0){ deliver(accumFinal.trim()); return; }
+          // numero non riconosciuto: aspetta ancora 1s
+          clearTimeout(permSilTimer);
+          permSilTimer = setTimeout(()=> deliver(accumFinal.trim()), 1000);
+        } else {
+          // testo libero: piccola pausa per eventuali parole finali
+          clearTimeout(permSilTimer);
+          permSilTimer = setTimeout(()=> deliver(accumFinal.trim()), 800);
+        }
+      }
+    };
+
+    rec.onerror = (e)=>{
+      permRec = null;
+      if(e.error==="not-allowed"||e.error==="permission-denied"){
+        micOK=false; showBanner();
+        if(permCallback&&permCallback.onError) permCallback.onError("not-allowed");
+        permCallback=null; return;
+      }
+      if(!delivered) deliver(accumFinal.trim());
+    };
+
+    rec.onend = ()=>{
+      permRec = null;
+      if(!delivered && accumFinal.trim()) deliver(accumFinal.trim());
+      // Nessun riavvio automatico
+    };
+
+    try{ rec.start(); }
+    catch(e){
+      permRec=null;
+      if(permCallback&&permCallback.onError){ permCallback.onError("start_error"); permCallback=null; }
     }
-    if(!delivered && permCallback && permCallback.onError) deliver("");
-  };
 
-  rec.onend = ()=>{
-    permRec = null;
-    // Se non abbiamo ancora consegnato e c'è testo accumulato, consegna ora
-    if(!delivered && accumFinal.trim()) deliver(accumFinal.trim());
-    // Altrimenti niente — non riaprire mai il SR automaticamente
-  };
+    // Timeout massimo assoluto
+    clearTimeout(permSilTimer);
+    permSilTimer = setTimeout(()=> deliver(accumFinal.trim()), isCount ? 8000 : 15000);
 
-  try{ rec.start(); }
-  catch(e){
-    permRec=null;
-    if(permCallback&&permCallback.onError){ permCallback.onError("start_error"); permCallback=null; }
-  }
-
-  // Timeout massimo assoluto
-  permSilTimer = setTimeout(()=> deliver(accumFinal.trim()), isCount ? 8000 : 15000);
+  }, 250);
 }
 
 function stopRec(){
@@ -1005,7 +1021,7 @@ function wizConfirm(){
 
   wizIdx++;
   renderStep();
-  if(wizIdx<wizSteps.length) setTimeout(()=>{ if(!wizManualMode) wizAsk(); },500);
+  if(wizIdx<wizSteps.length) setTimeout(()=>{ if(!wizManualMode) wizAsk(); },800);
 }
 
 function wizBack(){
