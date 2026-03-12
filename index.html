@@ -589,15 +589,17 @@ function permDeliver(txt){
 // API pubblica: inizia ad ascoltare per la prossima risposta
 function listenOnce(onResult, onInterim, onError, isCount){
   if(!SR){ if(onError) onError("not_supported"); return; }
-  // reset completo per questa domanda
+  // reset accumulo — NON toccare permDeaf: lo controlla solo speak()
   clearTimeout(permSilTimer);
   permAccum     = "";
   permInterim   = "";
-  permDeaf      = false;
+  // permDeaf rimane true finché speak() non ha finito — solo allora il mic è abilitato
   permListening = true;
   permCallback  = { onResult, onInterim, onError, isCount };
   if(!permRec) permStart();
-  permArmSilence(isCount ? 9000 : 16000);
+  // il timer di silenzio parte solo quando speak() chiama cb() e permDeaf diventa false
+  // qui armiamo un timer lungo come fallback di sicurezza
+  permArmSilence(isCount ? 12000 : 20000);
 }
 
 function stopRec(){
@@ -641,10 +643,11 @@ function pickBestVoice(){
 }
 
 function speak(text, cb){
-  if(!synthOK){ if(cb)setTimeout(cb,60); return; }
+  permDeaf = true;   // sordiciamo il mic PRIMA ancora di parlare
+  permAccum = ""; permInterim = ""; clearTimeout(permSilTimer);
+  if(!synthOK){ setTimeout(()=>{ permDeaf=false; if(cb)cb(); }, 60); return; }
   try{
     window.speechSynthesis.cancel();
-    permDeaf = true;   // sordiciamo il mic mentre parliamo
 
     const u = new SpeechSynthesisUtterance(text);
     u.lang  = "it-IT";
@@ -655,15 +658,19 @@ function speak(text, cb){
     if(voice) u.voice = voice;
 
     const afterSpeak = ()=>{
-      // svuota tutto quello che il mic ha captato durante la lettura
+      // Svuota accumulo e interim PRIMA di riabilitare il mic
       permAccum   = "";
       permInterim = "";
       clearTimeout(permSilTimer);
-      // piccola pausa prima di riabilitare — evita di captare l'eco finale
+      // Pausa di 400ms dopo la fine del TTS: evita eco e code audio
       setTimeout(()=>{
         permDeaf = false;
+        // Ora che il mic è abilitato, armiamo il timer di silenzio reale
+        if(permListening && permCallback){
+          permArmSilence(permCallback.isCount ? 6000 : 14000);
+        }
         if(cb) cb();
-      }, 250);
+      }, 400);
     };
 
     u.onend  = afterSpeak;
@@ -923,48 +930,54 @@ function wizAsk(){
   setWizMic("asking");
   document.getElementById("wiz-status").textContent = "🔊 Leggo la domanda...";
 
-  // Legge la domanda ad alta voce, poi subito apre il microfono
+  // Arma l'ascolto PRIMA di speak — ma permDeaf=true blocca tutto fino a fine TTS
+  permDeaf = true;
+  clearTimeout(permSilTimer);
+  permAccum = ""; permInterim = "";
+  permListening = true;
+  permCallback = {
+    onResult: (final)=>{
+      setTrans(final, false);
+      document.getElementById("wiz-interim").textContent = "";
+      setWizMic("ok");
+      if(isCount){
+        const n = parseCount(final);
+        if(n >= 0){
+          document.getElementById("wiz-status").textContent = `✅ ${n} — confermo`;
+          document.getElementById("wbtn-confirm").disabled = false;
+          setTimeout(()=> wizConfirm(), 600);
+          return;
+        }
+        document.getElementById("wiz-status").textContent = `⚠️ Ho sentito "${final}" — premi ✓ o 🔄`;
+      } else {
+        document.getElementById("wiz-status").textContent = "✅ Conferma o riprova";
+      }
+      document.getElementById("wbtn-confirm").disabled = false;
+    },
+    onInterim: (interim)=>{
+      document.getElementById("wiz-interim").textContent = interim;
+      if(isCount){
+        const n = parseCount(interim);
+        if(n >= 0) document.getElementById("wiz-interim").textContent = `${interim}  →  ${n}`;
+      }
+    },
+    onError: (err)=>{
+      setWizMic("idle");
+      document.getElementById("wiz-interim").textContent = "";
+      if(err === "not-allowed") document.getElementById("wiz-status").textContent = "❌ Microfono bloccato";
+      else document.getElementById("wiz-status").textContent = "⚠️ Premi 🎙 per riprovare";
+    },
+    isCount
+  };
+  if(!permRec) permStart();
+
+  // Legge la domanda — alla fine toglie permDeaf e arma il timer vero
   speak(step.q, ()=>{
     setWizMic("rec");
     document.getElementById("wiz-status").textContent = isCount
       ? "🔴 Di' il numero..."
       : "🔴 In ascolto...";
-
-    listenOnce(
-      (final)=>{
-        setTrans(final, false);
-        document.getElementById("wiz-interim").textContent = "";
-        setWizMic("ok");
-
-        if(isCount){
-          const n = parseCount(final);
-          if(n >= 0){
-            document.getElementById("wiz-status").textContent = `✅ ${n} — confermo`;
-            document.getElementById("wbtn-confirm").disabled = false;
-            setTimeout(()=> wizConfirm(), 600);
-            return;
-          }
-          document.getElementById("wiz-status").textContent = `⚠️ Ho sentito "${final}" — premi ✓ o 🔄`;
-        } else {
-          document.getElementById("wiz-status").textContent = "✅ Conferma o riprova";
-        }
-        document.getElementById("wbtn-confirm").disabled = false;
-      },
-      (interim)=>{
-        document.getElementById("wiz-interim").textContent = interim;
-        if(isCount){
-          const n = parseCount(interim);
-          if(n >= 0) document.getElementById("wiz-interim").textContent = `${interim}  →  ${n}`;
-        }
-      },
-      (err)=>{
-        setWizMic("idle");
-        document.getElementById("wiz-interim").textContent = "";
-        if(err === "not-allowed") document.getElementById("wiz-status").textContent = "❌ Microfono bloccato";
-        else document.getElementById("wiz-status").textContent = "⚠️ Premi 🎙 per riprovare";
-      },
-      isCount
-    );
+    // permDeaf è già false grazie a speak/afterSpeak — il timer è già armato
   });
 }
 
@@ -1044,19 +1057,21 @@ function wizConfirm(){
 
 function wizBack(){
   if(wizIdx === 0) return;
-  clearTimeout(permSilTimer); permListening=false; permCallback=null;
+  clearTimeout(permSilTimer);
+  permListening = false;
+  permCallback  = null;
+  permAccum     = "";
+  permInterim   = "";
+  permDeaf      = true;  // sordiciamo subito — parleremo noi
   if(synthOK) try{window.speechSynthesis.cancel();}catch(e){}
 
   wizIdx--;
-  // Se si torna su uno step "quanti?", annulla gli item creati e rimuove gli step iniettati dopo
+
+  // Se torniamo su uno step "quanti?" già risposto,
+  // rimuove gli step dinamici iniettati dopo di esso
   const step = wizSteps[wizIdx];
   if(step && step.isCount){
     if(step.section==="operai"){
-      // rimuove tutti gli step iniettati per operai e lavorazioni
-      const toRemove = wizSteps.slice(wizIdx+1).filter(s=>
-        s.opId || s.lavId || (s.t && s.t.startsWith("operaio:")) || (s.t && s.t.startsWith("lav:"))
-      ).length;
-      // più semplice: taglia tutto dopo questo step fino al prossimo step "noto" (bolle)
       const nextFixed = wizSteps.findIndex((s,i)=> i>wizIdx && s.t==="__count_bolle");
       if(nextFixed>wizIdx+1) wizSteps.splice(wizIdx+1, nextFixed-(wizIdx+1));
       R.operai=[]; R.lavorazioni=[];
