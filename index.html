@@ -486,8 +486,9 @@ async function requestMicThenStart(){
 }
 
 // ══════════════════════════════════════════════════════
-// MOTORE VOCALE — continuous=false con riavvio automatico
-// Funziona su Android Chrome (continuous=true causa loop)
+// MOTORE VOCALE — ibrido: continuous=true ma consegna
+// al primo risultato finale + timer silenzio.
+// Evita il loop di Android e i drop di PC.
 // ══════════════════════════════════════════════════════
 let permRec        = null;
 let permListening  = false;
@@ -501,40 +502,60 @@ let permRestarting = false;
 function permStart(){
   if(!SR||permRec||permDeaf||permRestarting||!permListening) return;
   const rec = new SR();
-  rec.lang="it-IT"; rec.continuous=false; rec.interimResults=true; rec.maxAlternatives=1;
+  rec.lang="it-IT"; rec.continuous=true; rec.interimResults=true; rec.maxAlternatives=1;
 
   rec.onresult = (e)=>{
     if(!permListening||permDeaf) return;
     let interim="";
     for(let i=e.resultIndex;i<e.results.length;i++){
-      if(e.results[i].isFinal) permAccum+=e.results[i][0].transcript+" ";
-      else{ interim=e.results[i][0].transcript; permInterim=interim; }
+      if(e.results[i].isFinal){
+        permAccum += e.results[i][0].transcript+" ";
+      } else {
+        interim = e.results[i][0].transcript;
+        permInterim = interim;
+      }
     }
     const display=(permAccum+interim).trim();
-    if(display&&permCallback&&permCallback.onInterim){
-      const n=permCallback.isCount?parseCount(display):-1;
-      permCallback.onInterim(n>=0?display+"  →  "+n:display);
+    if(display && permCallback && permCallback.onInterim){
+      const n=permCallback.isCount ? parseCount(display) : -1;
+      permCallback.onInterim(n>=0 ? display+"  →  "+n : display);
     }
+    // numero riconosciuto → consegna subito senza aspettare altro
     if(permCallback&&permCallback.isCount&&permAccum.trim()){
       const n=parseCount(permAccum.trim());
-      if(n>=0){permDeliver(permAccum.trim());return;}
+      if(n>=0){ permDeliver(permAccum.trim()); return; }
     }
-    permArmSilence(permCallback&&permCallback.isCount?1500:3000);
+    // testo libero: aspetta 2s di silenzio dopo l'ultima parola
+    permArmSilence(permCallback&&permCallback.isCount ? 1500 : 2000);
   };
 
   rec.onerror=(e)=>{
     permRec=null;
     if(e.error==="not-allowed"||e.error==="permission-denied"){micOK=false;showBanner();return;}
-    if(permListening&&!permDeaf){permRestarting=true;setTimeout(()=>{permRestarting=false;permStart();},400);}
+    // no-speech o aborted: riavvia solo se stiamo ancora aspettando
+    if(permListening&&!permDeaf){
+      permRestarting=true;
+      setTimeout(()=>{permRestarting=false; permStart();},400);
+    }
   };
 
   rec.onend=()=>{
     permRec=null;
-    if(permListening&&!permDeaf){permRestarting=true;setTimeout(()=>{permRestarting=false;permStart();},150);}
+    // se si chiude da solo mentre aspettiamo, riavvia
+    if(permListening&&!permDeaf){
+      permRestarting=true;
+      setTimeout(()=>{permRestarting=false; permStart();},200);
+    }
   };
 
-  try{rec.start();permRec=rec;}
-  catch(e){permRec=null;if(permListening&&!permDeaf){permRestarting=true;setTimeout(()=>{permRestarting=false;permStart();},500);}}
+  try{ rec.start(); permRec=rec; }
+  catch(e){
+    permRec=null;
+    if(permListening&&!permDeaf){
+      permRestarting=true;
+      setTimeout(()=>{permRestarting=false; permStart();},500);
+    }
+  }
 }
 
 function permStop(){
@@ -567,7 +588,7 @@ function listenOnce(onResult,onInterim,onError,isCount){
   permAccum=""; permInterim=""; permDeaf=false;
   permListening=true; permRestarting=false;
   permCallback={onResult,onInterim,onError,isCount};
-  setTimeout(()=>permStart(),100);
+  setTimeout(()=>permStart(),80);
   permArmSilence(isCount?10000:18000);
 }
 
