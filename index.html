@@ -486,118 +486,104 @@ async function requestMicThenStart(){
 }
 
 // ══════════════════════════════════════════════════════
-// MOTORE VOCALE — ibrido: continuous=true ma consegna
-// al primo risultato finale + timer silenzio.
-// Evita il loop di Android e i drop di PC.
+// MOTORE VOCALE — single-shot, nessun riavvio automatico
+// continuous=false: consegna al primo risultato finale.
+// Nessun loop su Android.
 // ══════════════════════════════════════════════════════
-let permRec        = null;
-let permListening  = false;
-let permDeaf       = false;
-let permCallback   = null;
-let permAccum      = "";
-let permInterim    = "";
-let permSilTimer   = null;
-let permRestarting = false;
+let permRec       = null;
+let permCallback  = null;
+let permSilTimer  = null;
+let permDeaf      = false;
 
-function permStart(){
-  if(!SR||permRec||permDeaf||permRestarting||!permListening) return;
+function listenOnce(onResult, onInterim, onError, isCount){
+  if(!SR){ if(onError) onError("not_supported"); return; }
+
+  // Chiudi eventuale istanza precedente
+  if(permRec){ try{ permRec.abort(); }catch(e){} permRec=null; }
+  clearTimeout(permSilTimer);
+  permCallback = { onResult, onInterim, onError, isCount };
+
   const rec = new SR();
-  rec.lang="it-IT"; rec.continuous=true; rec.interimResults=true; rec.maxAlternatives=1;
+  rec.lang="it-IT"; rec.continuous=false; rec.interimResults=true; rec.maxAlternatives=1;
+  permRec = rec;
+
+  let delivered = false;
+  let accumFinal = "";
+
+  function deliver(txt){
+    if(delivered) return;
+    delivered = true;
+    clearTimeout(permSilTimer);
+    permRec = null;
+    try{ rec.abort(); }catch(e){}
+    const cb = permCallback; permCallback = null;
+    if(!cb) return;
+    if(txt) cb.onResult(txt);
+    else if(cb.onError) cb.onError("end_no_result");
+  }
 
   rec.onresult = (e)=>{
-    if(!permListening||permDeaf) return;
-    let interim="";
-    for(let i=e.resultIndex;i<e.results.length;i++){
-      if(e.results[i].isFinal){
-        permAccum += e.results[i][0].transcript+" ";
-      } else {
-        interim = e.results[i][0].transcript;
-        permInterim = interim;
-      }
+    if(permDeaf){ deliver(""); return; }
+    let interim = "";
+    for(let i=e.resultIndex; i<e.results.length; i++){
+      if(e.results[i].isFinal) accumFinal += e.results[i][0].transcript + " ";
+      else interim = e.results[i][0].transcript;
     }
-    const display=(permAccum+interim).trim();
+    const display = (accumFinal + interim).trim();
+
     if(display && permCallback && permCallback.onInterim){
-      const n=permCallback.isCount ? parseCount(display) : -1;
+      const n = isCount ? parseCount(display) : -1;
       permCallback.onInterim(n>=0 ? display+"  →  "+n : display);
     }
-    // numero riconosciuto → consegna subito senza aspettare altro
-    if(permCallback&&permCallback.isCount&&permAccum.trim()){
-      const n=parseCount(permAccum.trim());
-      if(n>=0){ permDeliver(permAccum.trim()); return; }
-    }
-    // testo libero: aspetta 2s di silenzio dopo l'ultima parola
-    permArmSilence(permCallback&&permCallback.isCount ? 1500 : 2000);
-  };
 
-  rec.onerror=(e)=>{
-    permRec=null;
-    if(e.error==="not-allowed"||e.error==="permission-denied"){micOK=false;showBanner();return;}
-    // no-speech o aborted: riavvia solo se stiamo ancora aspettando
-    if(permListening&&!permDeaf){
-      permRestarting=true;
-      setTimeout(()=>{permRestarting=false; permStart();},400);
+    // Numero: consegna subito al primo finale valido
+    if(isCount && accumFinal.trim()){
+      const n = parseCount(accumFinal.trim());
+      if(n>=0){ deliver(accumFinal.trim()); return; }
+    }
+
+    // Testo libero: consegna appena arriva il primo risultato finale
+    if(accumFinal.trim()){
+      // piccola pausa per eventuali parole finali in arrivo
+      clearTimeout(permSilTimer);
+      permSilTimer = setTimeout(()=> deliver(accumFinal.trim()), 800);
     }
   };
 
-  rec.onend=()=>{
-    permRec=null;
-    // se si chiude da solo mentre aspettiamo, riavvia
-    if(permListening&&!permDeaf){
-      permRestarting=true;
-      setTimeout(()=>{permRestarting=false; permStart();},200);
+  rec.onerror = (e)=>{
+    permRec = null;
+    if(e.error==="not-allowed"||e.error==="permission-denied"){
+      micOK=false; showBanner();
+      if(permCallback&&permCallback.onError) permCallback.onError("not-allowed");
+      permCallback=null; return;
     }
+    if(!delivered && permCallback && permCallback.onError) deliver("");
   };
 
-  try{ rec.start(); permRec=rec; }
+  rec.onend = ()=>{
+    permRec = null;
+    // Se non abbiamo ancora consegnato e c'è testo accumulato, consegna ora
+    if(!delivered && accumFinal.trim()) deliver(accumFinal.trim());
+    // Altrimenti niente — non riaprire mai il SR automaticamente
+  };
+
+  try{ rec.start(); }
   catch(e){
     permRec=null;
-    if(permListening&&!permDeaf){
-      permRestarting=true;
-      setTimeout(()=>{permRestarting=false; permStart();},500);
-    }
+    if(permCallback&&permCallback.onError){ permCallback.onError("start_error"); permCallback=null; }
   }
-}
 
-function permStop(){
-  clearTimeout(permSilTimer);
-  permListening=false; permDeaf=false; permCallback=null;
-  permAccum=""; permInterim=""; permRestarting=false;
-  if(permRec){try{permRec.stop();}catch(e){}permRec=null;}
-}
-
-function permArmSilence(ms){
-  clearTimeout(permSilTimer);
-  permSilTimer=setTimeout(()=>permDeliver((permAccum||permInterim).trim()),ms);
-}
-
-function permDeliver(txt){
-  clearTimeout(permSilTimer);
-  if(!permListening||!permCallback) return;
-  permListening=false; permRestarting=false;
-  if(permRec){try{permRec.stop();}catch(e){}permRec=null;}
-  const cb=permCallback; permCallback=null;
-  permAccum=""; permInterim="";
-  if(txt) cb.onResult(txt);
-  else if(cb.onError) cb.onError("end_no_result");
-}
-
-function listenOnce(onResult,onInterim,onError,isCount){
-  if(!SR){if(onError)onError("not_supported");return;}
-  clearTimeout(permSilTimer);
-  if(permRec){try{permRec.stop();}catch(e){}permRec=null;}
-  permAccum=""; permInterim=""; permDeaf=false;
-  permListening=true; permRestarting=false;
-  permCallback={onResult,onInterim,onError,isCount};
-  setTimeout(()=>permStart(),80);
-  permArmSilence(isCount?10000:18000);
+  // Timeout massimo assoluto
+  permSilTimer = setTimeout(()=> deliver(accumFinal.trim()), isCount ? 8000 : 15000);
 }
 
 function stopRec(){
   clearTimeout(permSilTimer);
-  permListening=false; permCallback=null;
-  permAccum=""; permInterim=""; permRestarting=false;
-  if(permRec){try{permRec.stop();}catch(e){}permRec=null;}
+  permCallback = null;
+  if(permRec){ try{ permRec.abort(); }catch(e){} permRec=null; }
 }
+
+function permStop(){ stopRec(); permDeaf=false; }
 
 // ── SELEZIONE VOCE ITALIANA MIGLIORE DISPONIBILE ──────────
 let _bestVoice = null;
@@ -950,7 +936,7 @@ function wizAsk(){
 
 function wizMicClick(){
   if(wizMicState==="rec"){
-    clearTimeout(permSilTimer); permListening=false; permCallback=null;
+    stopRec();
     setWizMic("idle"); document.getElementById("wiz-status").textContent="Premi il microfono per riprovare"; return;
   }
   if(wizMicState==="idle"||wizMicState==="ok") wizAsk();
@@ -1024,12 +1010,8 @@ function wizConfirm(){
 
 function wizBack(){
   if(wizIdx === 0) return;
-  clearTimeout(permSilTimer);
-  permListening = false;
-  permCallback  = null;
-  permAccum     = "";
-  permInterim   = "";
-  permDeaf      = true;  // sordiciamo subito — parleremo noi
+  stopRec();
+  permDeaf = true;
   if(synthOK) try{window.speechSynthesis.cancel();}catch(e){}
 
   wizIdx--;
@@ -1054,7 +1036,7 @@ function wizBack(){
 }
 
 function wizSkip(){
-  clearTimeout(permSilTimer); permListening=false; permCallback=null;
+  stopRec();
   if(synthOK) try{window.speechSynthesis.cancel();}catch(e){}
   wizIdx++;
   renderStep();
@@ -1062,7 +1044,7 @@ function wizSkip(){
 }
 
 function wizRetry(){
-  clearTimeout(permSilTimer); permListening=false; permCallback=null;
+  stopRec();
   if(synthOK) try{window.speechSynthesis.cancel();}catch(e){}
   setTrans("",true);
   document.getElementById("wiz-interim").textContent="";
@@ -1079,8 +1061,7 @@ function wizFinish(){
 }
 
 function wizToggleKbd(){
-  clearTimeout(permSilTimer);
-  permListening = false;
+  stopRec();
   if(synthOK) try{window.speechSynthesis.cancel();}catch(e){}
   wizManualMode = !wizManualMode;
   const step = wizSteps[wizIdx];
