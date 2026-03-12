@@ -464,7 +464,6 @@ async function requestMicThenStart(){
   try{
     micStream = await navigator.mediaDevices.getUserMedia({audio:true,video:false});
     micOK=true; hideBanner();
-    permStart(); // avvia subito il microfono permanente
     document.getElementById("wiz-perm").style.display="none";
     document.getElementById("wiz-main").style.display="block";
     wizBegin();
@@ -487,128 +486,96 @@ async function requestMicThenStart(){
 }
 
 // ══════════════════════════════════════════════════════
-// MICROFONO PERMANENTE — un solo SR aperto per tutto il wizard
-// Non viene mai chiuso/riaperto: evita i problemi di Chrome
-// con parole brevi come "tre", "due", ecc.
+// MOTORE VOCALE — continuous=false con riavvio automatico
+// Funziona su Android Chrome (continuous=true causa loop)
 // ══════════════════════════════════════════════════════
-let permRec       = null;   // istanza SR sempre accesa
-let permListening = false;  // stiamo aspettando una risposta?
-let permDeaf      = false;  // sordo mentre la sintesi parla
-let permCallback  = null;   // { onResult, onInterim, onError, isCount }
-let permAccum     = "";
-let permInterim   = "";
-let permSilTimer  = null;
+let permRec        = null;
+let permListening  = false;
+let permDeaf       = false;
+let permCallback   = null;
+let permAccum      = "";
+let permInterim    = "";
+let permSilTimer   = null;
+let permRestarting = false;
 
 function permStart(){
-  if(!SR) return;
-  if(permRec) return; // già avviato
+  if(!SR||permRec||permDeaf||permRestarting||!permListening) return;
   const rec = new SR();
-  rec.lang           = "it-IT";
-  rec.continuous     = true;
-  rec.interimResults = true;
-  rec.maxAlternatives= 1;
+  rec.lang="it-IT"; rec.continuous=false; rec.interimResults=true; rec.maxAlternatives=1;
 
   rec.onresult = (e)=>{
-    if(!permListening || permDeaf) return;  // ignora mentre la sintesi parla
-    let interim = "";
-    for(let i = e.resultIndex; i < e.results.length; i++){
-      if(e.results[i].isFinal){
-        permAccum += e.results[i][0].transcript + " ";
-      } else {
-        interim = e.results[i][0].transcript;
-        permInterim = interim;
-      }
+    if(!permListening||permDeaf) return;
+    let interim="";
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      if(e.results[i].isFinal) permAccum+=e.results[i][0].transcript+" ";
+      else{ interim=e.results[i][0].transcript; permInterim=interim; }
     }
-    const display = (permAccum + interim).trim();
-    if(display && permCallback && permCallback.onInterim){
-      const cb = permCallback;
-      if(cb.isCount){
-        const n = parseCount(display);
-        cb.onInterim(n >= 0 ? display + "  →  " + n : display);
-      } else {
-        cb.onInterim(display);
-      }
+    const display=(permAccum+interim).trim();
+    if(display&&permCallback&&permCallback.onInterim){
+      const n=permCallback.isCount?parseCount(display):-1;
+      permCallback.onInterim(n>=0?display+"  →  "+n:display);
     }
-    // per i numeri: se abbiamo già un finale con numero valido, chiudi subito
-    if(permCallback && permCallback.isCount && permAccum.trim()){
-      const n = parseCount(permAccum.trim());
-      if(n >= 0){ permDeliver(permAccum.trim()); return; }
+    if(permCallback&&permCallback.isCount&&permAccum.trim()){
+      const n=parseCount(permAccum.trim());
+      if(n>=0){permDeliver(permAccum.trim());return;}
     }
-    // riavvia il timer di silenzio
-    permArmSilence(permCallback && permCallback.isCount ? 1200 : 2500);
+    permArmSilence(permCallback&&permCallback.isCount?1500:3000);
   };
 
-  rec.onerror = (e)=>{
-    if(e.error === "not-allowed" || e.error === "permission-denied"){
-      micOK = false; showBanner(); return;
-    }
-    // errori non fatali (no-speech, aborted): riavvia silenziosamente
-    if(e.error === "no-speech" || e.error === "aborted") return;
-    // altri errori: ricrea l'istanza
-    permRec = null;
-    setTimeout(permStart, 300);
+  rec.onerror=(e)=>{
+    permRec=null;
+    if(e.error==="not-allowed"||e.error==="permission-denied"){micOK=false;showBanner();return;}
+    if(permListening&&!permDeaf){permRestarting=true;setTimeout(()=>{permRestarting=false;permStart();},400);}
   };
 
-  rec.onend = ()=>{
-    // Chrome a volte chiude da solo — riapre immediatamente
-    if(permRec === rec){
-      permRec = null;
-      setTimeout(permStart, 100);
-    }
+  rec.onend=()=>{
+    permRec=null;
+    if(permListening&&!permDeaf){permRestarting=true;setTimeout(()=>{permRestarting=false;permStart();},150);}
   };
 
-  try{ rec.start(); permRec = rec; }
-  catch(e){ permRec = null; setTimeout(permStart, 500); }
+  try{rec.start();permRec=rec;}
+  catch(e){permRec=null;if(permListening&&!permDeaf){permRestarting=true;setTimeout(()=>{permRestarting=false;permStart();},500);}}
 }
 
 function permStop(){
   clearTimeout(permSilTimer);
-  permListening = false;
-  permCallback  = null;
-  if(permRec){ try{ permRec.stop(); }catch(e){} permRec = null; }
+  permListening=false; permDeaf=false; permCallback=null;
+  permAccum=""; permInterim=""; permRestarting=false;
+  if(permRec){try{permRec.stop();}catch(e){}permRec=null;}
 }
 
 function permArmSilence(ms){
   clearTimeout(permSilTimer);
-  permSilTimer = setTimeout(()=>{
-    const txt = (permAccum || permInterim).trim();
-    permDeliver(txt);
-  }, ms);
+  permSilTimer=setTimeout(()=>permDeliver((permAccum||permInterim).trim()),ms);
 }
 
 function permDeliver(txt){
   clearTimeout(permSilTimer);
-  if(!permListening || !permCallback) return;
-  permListening = false;
-  const cb = permCallback;
-  permCallback = null;
+  if(!permListening||!permCallback) return;
+  permListening=false; permRestarting=false;
+  if(permRec){try{permRec.stop();}catch(e){}permRec=null;}
+  const cb=permCallback; permCallback=null;
+  permAccum=""; permInterim="";
   if(txt) cb.onResult(txt);
   else if(cb.onError) cb.onError("end_no_result");
 }
 
-// API pubblica: inizia ad ascoltare per la prossima risposta
-function listenOnce(onResult, onInterim, onError, isCount){
-  if(!SR){ if(onError) onError("not_supported"); return; }
-  // reset accumulo — NON toccare permDeaf: lo controlla solo speak()
+function listenOnce(onResult,onInterim,onError,isCount){
+  if(!SR){if(onError)onError("not_supported");return;}
   clearTimeout(permSilTimer);
-  permAccum     = "";
-  permInterim   = "";
-  // permDeaf rimane true finché speak() non ha finito — solo allora il mic è abilitato
-  permListening = true;
-  permCallback  = { onResult, onInterim, onError, isCount };
-  if(!permRec) permStart();
-  // il timer di silenzio parte solo quando speak() chiama cb() e permDeaf diventa false
-  // qui armiamo un timer lungo come fallback di sicurezza
-  permArmSilence(isCount ? 12000 : 20000);
+  if(permRec){try{permRec.stop();}catch(e){}permRec=null;}
+  permAccum=""; permInterim=""; permDeaf=false;
+  permListening=true; permRestarting=false;
+  permCallback={onResult,onInterim,onError,isCount};
+  setTimeout(()=>permStart(),100);
+  permArmSilence(isCount?10000:18000);
 }
 
 function stopRec(){
   clearTimeout(permSilTimer);
-  permListening = false;
-  permCallback  = null;
-  permAccum     = "";
-  permInterim   = "";
-  // NON chiudiamo permRec — rimane aperto per la prossima domanda
+  permListening=false; permCallback=null;
+  permAccum=""; permInterim=""; permRestarting=false;
+  if(permRec){try{permRec.stop();}catch(e){}permRec=null;}
 }
 
 // ── SELEZIONE VOCE ITALIANA MIGLIORE DISPONIBILE ──────────
