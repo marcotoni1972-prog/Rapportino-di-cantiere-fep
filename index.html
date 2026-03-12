@@ -637,28 +637,65 @@ function speak(text, cb){
   if(!synthOK){ permDeaf=false; if(cb)setTimeout(cb,60); return; }
   try{
     window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang="it-IT"; u.rate=1.05; u.pitch=1.0; u.volume=1.0;
-    const voice = pickBestVoice();
-    if(voice) u.voice = voice;
 
-    const done = ()=>{
-      permDeaf = false;
-      if(cb) setTimeout(cb, 300); // 300ms pausa dopo fine TTS prima di aprire mic
-    };
-    u.onend  = done;
-    u.onerror= done;
-    window.speechSynthesis.speak(u);
+    // Spezza il testo in frasi brevi (≤80 char) per evitare il bug Android
+    // che tronca le utterance lunghe
+    const chunks = splitToChunks(text, 80);
+    let idx = 0;
 
-    const ki = setInterval(()=>{
-      if(!window.speechSynthesis.speaking){ clearInterval(ki); return; }
-      window.speechSynthesis.pause();
-      window.speechSynthesis.resume();
-    }, 9000);
+    function speakNext(){
+      if(idx >= chunks.length){
+        permDeaf = false;
+        if(cb) setTimeout(cb, 300);
+        return;
+      }
+      const u = new SpeechSynthesisUtterance(chunks[idx++]);
+      u.lang="it-IT"; u.rate=1.0; u.pitch=1.0; u.volume=1.0;
+      const voice = pickBestVoice();
+      if(voice) u.voice = voice;
+      u.onend   = ()=> speakNext();
+      u.onerror = ()=> speakNext();
+      window.speechSynthesis.speak(u);
+    }
+
+    speakNext();
   }catch(e){
     permDeaf = false;
     if(cb) setTimeout(cb, 80);
   }
+}
+
+// Spezza il testo in chunk da maxLen caratteri, tagliando sulle pause naturali
+function splitToChunks(text, maxLen){
+  // Prima dividi su punteggiatura forte
+  const sentences = text.split(/(?<=[.!?:;,])\s+/);
+  const chunks = [];
+  let cur = "";
+  for(const s of sentences){
+    if(!s.trim()) continue;
+    if((cur + " " + s).trim().length <= maxLen){
+      cur = (cur + " " + s).trim();
+    } else {
+      if(cur) chunks.push(cur);
+      // se la singola frase è ancora troppo lunga, spezza sulla virgola o sullo spazio
+      if(s.length > maxLen){
+        const words = s.split(" ");
+        cur = "";
+        for(const w of words){
+          if((cur + " " + w).trim().length <= maxLen){
+            cur = (cur + " " + w).trim();
+          } else {
+            if(cur) chunks.push(cur);
+            cur = w;
+          }
+        }
+      } else {
+        cur = s;
+      }
+    }
+  }
+  if(cur) chunks.push(cur);
+  return chunks.length ? chunks : [text];
 }
 
 // Le voci si caricano in modo asincrono — aggiorna quando disponibili
@@ -698,37 +735,27 @@ let wizSteps=[], wizIdx=0, wizMicState="idle";
 
 function buildSteps(){
   const s=[];
-  s.push({lbl:"📋 Cantiere",     q:"Come si chiama il cantiere?",             t:"field:cantiere"});
-  s.push({lbl:"📋 Responsabile", q:"Chi è il responsabile di cantiere oggi?", t:"field:responsabile"});
-  // Operai: prima chiede quanti, poi nome per ciascuno (iniettato in wizConfirm)
-  s.push({lbl:"👷 Quanti operai", q:"Quanti operai sono presenti oggi in cantiere?",
+  s.push({lbl:"📋 Cantiere",     q:"Come si chiama il cantiere?",           t:"field:cantiere"});
+  s.push({lbl:"📋 Responsabile", q:"Chi è il responsabile oggi?",           t:"field:responsabile"});
+  s.push({lbl:"👷 Quanti operai", q:"Quanti operai ci sono oggi?",
     t:"__count_operai", isCount:true, section:"operai"});
-  // Dopo gli operai: le lavorazioni per ciascuno vengono iniettate in wizConfirm (sezione operai)
-  // Bolle: prima chiede quante, poi dettagli (iniettato in wizConfirm)
-  s.push({lbl:"📦 Quante bolle", q:"Quante bolle di consegna sono entrate oggi? Di' zero se nessuna.",
+  s.push({lbl:"📦 Quante bolle", q:"Quante bolle di consegna sono entrate? Di' zero se nessuna.",
     t:"__count_bolle", isCount:true, section:"bolle"});
-  // Mezzi: solo campo libero "quali"
-  s.push({lbl:"🚛 Mezzi utilizzati", q:"Quali mezzi sono stati utilizzati oggi? Elencali liberamente.",
-    t:"field:mezzi_libero"});
-  // Attrezzatura speciale: campo libero
-  s.push({lbl:"🔧 Attrezzatura speciale", q:"Quale attrezzatura speciale è entrata in cantiere oggi? Se nessuna, di' niente.",
-    t:"field:attrezzatura_speciale"});
-  // Note
-  s.push({lbl:"📝 Note", q:"Hai note o osservazioni? Se nessuna, di' niente.", t:"field:note"});
+  s.push({lbl:"🚛 Mezzi",        q:"Quali mezzi sono stati usati oggi?",    t:"field:mezzi_libero"});
+  s.push({lbl:"🔧 Attrezzatura", q:"Quale attrezzatura speciale è entrata? Se nessuna, di' niente.", t:"field:attrezzatura_speciale"});
+  s.push({lbl:"📝 Note",         q:"Hai note o osservazioni? Se nessuna, di' niente.", t:"field:note"});
   return s;
 }
 
-// UNA SOLA DOMANDA per operaio: nome, lavori eseguiti, ore — tutto insieme
 function injectOperaiSteps(items){
   const news=[];
   items.forEach((o,i)=>{
     const n=i+1;
-    // Crea subito una lavorazione collegata a questo operaio
     const lav={id:uid(),descrizione:"",ore:"",operatori:"1",completata:false};
     R.lavorazioni.push(lav);
     news.push({
       lbl:`👷 Operaio ${n}`,
-      q:`Operaio ${n}: di' nome e cognome, quali lavori ha eseguito e per quante ore.`,
+      q:`Operaio ${n}: nome, lavori eseguiti e ore.`,
       t:`__operaio_completo`,
       opId: o.id,
       lavId: lav.id
@@ -737,14 +764,13 @@ function injectOperaiSteps(items){
   wizSteps.splice(wizIdx+1, 0, ...news);
 }
 
-// UNA SOLA DOMANDA per bolla: fornitore + numero DDT — risposta libera
 function injectBolleSteps(items){
   const news=[];
   items.forEach((b,i)=>{
     const n=i+1;
     news.push({
       lbl:`📦 Bolla ${n}`,
-      q:`Bolla ${n}: di' il nome del fornitore e il numero della bolla o DDT. Poi ricordati di fotografare la bolla con il tasto 📷 nella sezione Bolle.`,
+      q:`Bolla ${n}: fornitore e numero DDT.`,
       t:`__bolla_completa`,
       bollaId: b.id
     });
