@@ -812,21 +812,35 @@ function splitToChunks(text, maxLen){
 }
 
 // ── SUONO RINTOCCO ──────────────────────────────────
+let _audioCtx = null;
+function getAudioCtx(){
+  if(!_audioCtx){
+    try{ _audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){}
+  }
+  return _audioCtx;
+}
+// Inizializza al primo tocco dell'utente (richiesto da Android Chrome)
+document.addEventListener("touchstart", ()=>getAudioCtx(), {once:true, passive:true});
+document.addEventListener("click",      ()=>getAudioCtx(), {once:true, passive:true});
+
 function playDing(){
   try{
-    const ctx = new (window.AudioContext||window.webkitAudioContext)();
-    // Rintocco: oscillatore sinusoidale con decay
+    const ctx = getAudioCtx();
+    if(!ctx) return;
+    // Resume se sospeso (Android lo mette in suspend finché non c'è interazione)
+    if(ctx.state === "suspended") ctx.resume();
     const osc  = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
     osc.type = "sine";
-    osc.frequency.setValueAtTime(880, ctx.currentTime);          // La5
-    osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.4); // scende a La4
-    gain.gain.setValueAtTime(0.55, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.9);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.9);
+    const t = ctx.currentTime;
+    osc.frequency.setValueAtTime(880, t);
+    osc.frequency.exponentialRampToValueAtTime(440, t + 0.5);
+    gain.gain.setValueAtTime(0.6, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+    osc.start(t);
+    osc.stop(t + 0.9);
   }catch(e){}
 }
 if(synthOK){
@@ -1111,7 +1125,11 @@ function wizMicClick(){
     stopRec();
     setWizMic("idle"); document.getElementById("wiz-status").textContent="Premi il microfono per riprovare"; return;
   }
-  if(wizMicState==="idle"||wizMicState==="ok") wizAsk();
+  if(wizMicState==="idle"||wizMicState==="ok"){
+    // Il click è un gesto utente — ottimo momento per sbloccare l'audio
+    try{ if(_audioCtx && _audioCtx.state==="suspended") _audioCtx.resume(); }catch(e){}
+    wizAsk();
+  }
 }
 
 function wizConfirm(){
