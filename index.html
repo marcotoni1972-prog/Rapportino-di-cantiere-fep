@@ -305,7 +305,7 @@ input[type=file]{display:none;}
       <div style="font-size:17px;font-weight:900;color:#f1f5f9;margin-bottom:8px">Attiva il Microfono</div>
       <div style="font-size:12px;color:#94a3b8;line-height:1.7;margin-bottom:22px">Il browser chiederà il permesso.<br>Premi <strong style="color:#f97316">Consenti</strong> quando appare il popup.</div>
       <div id="wiz-perm-err"></div>
-      <button id="wiz-perm-btn" onclick="requestMicThenStart()">🎙 ATTIVA MICROFONO</button>
+      <button id="wiz-perm-btn" onclick="unlockAudio();requestMicThenStart()">🎙 ATTIVA MICROFONO</button>
       <button onclick="closeWizard()" style="width:100%;margin-top:10px;background:transparent;border:1px solid rgba(100,116,139,.3);border-radius:8px;color:#64748b;font-family:'Courier New',monospace;font-size:12px;padding:10px;cursor:pointer;">✕ ANNULLA</button>
     </div>
     <!-- domande -->
@@ -367,7 +367,7 @@ input[type=file]{display:none;}
       </div>
       <div id="hdr-btns">
         <span id="pct-badge" class="bpct">0%</span>
-        <button class="bwiz"      onclick="startWizard()">🎙 GUIDA VOCALE</button>
+        <button class="bwiz"      onclick="unlockAudio();startWizard()">🎙 GUIDA VOCALE</button>
         <button id="btn-sospendi" class="bsospendi" onclick="toggleSospendi()" style="display:none">⏸ SOSPENDI</button>
         <button class="bcal"      onclick="openCal()">📅 CALENDARIO</button>
         <button id="btn-save"     class="bsave" onclick="saveReport()">💾 SALVA</button>
@@ -812,35 +812,40 @@ function splitToChunks(text, maxLen){
 }
 
 // ── SUONO RINTOCCO ──────────────────────────────────
-let _audioCtx = null;
-function getAudioCtx(){
-  if(!_audioCtx){
-    try{ _audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){}
-  }
-  return _audioCtx;
+// Su Android il AudioContext deve essere creato dentro un gesto utente diretto.
+// Lo sblocchiamo al click sul tasto GUIDA VOCALE e lo riusiamo per il ding.
+let _dingCtx = null;
+
+function unlockAudio(){
+  try{
+    if(!_dingCtx) _dingCtx = new (window.AudioContext||window.webkitAudioContext)();
+    if(_dingCtx.state === "suspended") _dingCtx.resume();
+  }catch(e){}
 }
-// Inizializza al primo tocco dell'utente (richiesto da Android Chrome)
-document.addEventListener("touchstart", ()=>getAudioCtx(), {once:true, passive:true});
-document.addEventListener("click",      ()=>getAudioCtx(), {once:true, passive:true});
 
 function playDing(){
   try{
-    const ctx = getAudioCtx();
-    if(!ctx) return;
-    // Resume se sospeso (Android lo mette in suspend finché non c'è interazione)
-    if(ctx.state === "suspended") ctx.resume();
+    if(!_dingCtx) _dingCtx = new (window.AudioContext||window.webkitAudioContext)();
+    if(_dingCtx.state === "suspended"){ _dingCtx.resume().then(()=>_playDingNow()); return; }
+    _playDingNow();
+  }catch(e){}
+}
+
+function _playDingNow(){
+  try{
+    const ctx  = _dingCtx;
     const osc  = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
     osc.type = "sine";
     const t = ctx.currentTime;
-    osc.frequency.setValueAtTime(880, t);
-    osc.frequency.exponentialRampToValueAtTime(440, t + 0.5);
-    gain.gain.setValueAtTime(0.6, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+    osc.frequency.setValueAtTime(1046, t);
+    osc.frequency.exponentialRampToValueAtTime(523, t + 0.5);
+    gain.gain.setValueAtTime(0.5, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
     osc.start(t);
-    osc.stop(t + 0.9);
+    osc.stop(t + 0.8);
   }catch(e){}
 }
 if(synthOK){
@@ -1126,8 +1131,7 @@ function wizMicClick(){
     setWizMic("idle"); document.getElementById("wiz-status").textContent="Premi il microfono per riprovare"; return;
   }
   if(wizMicState==="idle"||wizMicState==="ok"){
-    // Il click è un gesto utente — ottimo momento per sbloccare l'audio
-    try{ if(_audioCtx && _audioCtx.state==="suspended") _audioCtx.resume(); }catch(e){}
+    try{ if(_dingCtx && _dingCtx.state==="suspended") _dingCtx.resume(); }catch(e){}
     wizAsk();
   }
 }
