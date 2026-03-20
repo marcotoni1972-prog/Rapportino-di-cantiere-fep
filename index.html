@@ -932,24 +932,21 @@ function parseCount(txt){
 }
 
 function startWizard(){
-  // Funziona anche senza microfono — mostra fallback manuale
+  document.getElementById("wiz-ov").className="open";
   document.getElementById("wiz-perm").style.display="block";
   document.getElementById("wiz-main").style.display="none";
   const btn=document.getElementById("wiz-perm-btn");
   const err=document.getElementById("wiz-perm-err");
 
   if(!SR){
-    // No speech recognition: salta permesso e va subito in modalità manuale
     document.getElementById("wiz-perm").style.display="none";
     document.getElementById("wiz-main").style.display="block";
-    document.getElementById("wiz-ov").className="open";
     wizBeginManual();
     return;
   }
 
   btn.textContent="🎙 ATTIVA MICROFONO"; btn.disabled=false;
   err.style.display="none";
-  document.getElementById("wiz-ov").className="open";
 
   if(micOK){
     document.getElementById("wiz-perm").style.display="none";
