@@ -811,7 +811,24 @@ function splitToChunks(text, maxLen){
   return chunks.length ? chunks : [text];
 }
 
-// Le voci si caricano in modo asincrono — aggiorna quando disponibili
+// ── SUONO RINTOCCO ──────────────────────────────────
+function playDing(){
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    // Rintocco: oscillatore sinusoidale con decay
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, ctx.currentTime);          // La5
+    osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.4); // scende a La4
+    gain.gain.setValueAtTime(0.55, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.9);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.9);
+  }catch(e){}
+}
 if(synthOK){
   window.speechSynthesis.onvoiceschanged = ()=>{ _bestVoice=null; pickBestVoice(); };
 }
@@ -1050,6 +1067,7 @@ function wizAsk(){
     document.getElementById("wiz-status").textContent = isCount
       ? "🔴 Di' il numero..."
       : "🔴 In ascolto...";
+    playDing();
 
     listenOnce(
       (final)=>{
@@ -1748,8 +1766,21 @@ function renderCal(){
     reports.slice(0,2).forEach(r=>{
       const badge=document.createElement("div");
       badge.className="cday-badge";
-      badge.textContent=(r.cantiere||"Cantiere")+(r.responsabile?" · "+r.responsabile.split(" ")[0]:"");
+      const cantiere = r.cantiere||"Cantiere";
+      const resp = r.responsabile ? " · "+r.responsabile.split(" ")[0] : "";
+      const lav = (r.lavorazioni_libero||"").trim().substring(0,30) ||
+                  (r.lavorazioni&&r.lavorazioni[0] ? r.lavorazioni[0].descrizione||"" : "");
+      badge.textContent = cantiere + resp;
+      if(lav) badge.title = lav; // tooltip con descrizione lavori
       cell.appendChild(badge);
+      if(lav){
+        const lavBadge=document.createElement("div");
+        lavBadge.className="cday-badge";
+        lavBadge.style.background="rgba(99,102,241,.2)";
+        lavBadge.style.color="#a5b4fc";
+        lavBadge.textContent="⚒️ "+lav.substring(0,28)+(lav.length>28?"…":"");
+        cell.appendChild(lavBadge);
+      }
     });
     if(reports.length>2){
       const more=document.createElement("div");
@@ -1785,6 +1816,7 @@ function openCalDay(dateStr){
         <div class="cal-rep-row">👷 Responsabile: <span>${esc(r.responsabile||"—")}</span></div>
         <div class="cal-rep-row">👥 Operai: <span>${r.operai&&r.operai.length||0}</span>
           &nbsp;·&nbsp; 📦 Bolle: <span>${r.bolle&&r.bolle.length||0}</span></div>
+        ${(r.lavorazioni_libero||"").trim() ? `<div class="cal-rep-row">⚒️ <span>${esc((r.lavorazioni_libero||"").substring(0,80)+((r.lavorazioni_libero||"").length>80?"…":""))}</span></div>` : (r.lavorazioni&&r.lavorazioni.length ? `<div class="cal-rep-row">⚒️ <span>${esc(r.lavorazioni.map(l=>l.descrizione).filter(Boolean).join(", ").substring(0,80))}</span></div>` : "")}
         ${r.note?`<div class="cal-rep-row">📝 <span>${esc(r.note.substring(0,60)+(r.note.length>60?"…":""))}</span></div>`:""}
       </div>`).join("");
   }
