@@ -974,7 +974,9 @@ function wizBeginCore(){
   R.operai=[]; R.lavorazioni=[]; R.bolle=[];
   R.mezzi_libero=""; R.attrezzatura_speciale="";
   wizSteps=buildSteps(); wizIdx=0;
-  // In modalità manuale nasconde il microfono e mostra subito il pad
+  // Mostra tasto SOSPENDI nell'header
+  const bs=document.getElementById("btn-sospendi");
+  bs.style.display=""; bs.textContent="⏸ SOSPENDI"; bs.className="bsospendi";
   if(wizManualMode){
     document.getElementById("wiz-mic-wrap").style.display="none";
     document.getElementById("wiz-status").style.display="none";
@@ -1211,6 +1213,9 @@ function wizFinish(){
   permStop();
   if(synthOK) try{window.speechSynthesis.cancel();}catch(e){}
   document.getElementById("wiz-ov").className="";
+  document.getElementById("btn-sospendi").style.display="none";
+  wizSospeso=false;
+  try{localStorage.removeItem("rc_wiz_sospeso");}catch(e){}
   saveReport(); render();
   setTimeout(()=>openRecap(),300);
 }
@@ -1251,6 +1256,7 @@ function closeWizard(){
   document.getElementById("wiz-ov").className="";
   document.getElementById("wiz-perm").style.display="block";
   document.getElementById("wiz-main").style.display="none";
+  if(!wizSospeso) document.getElementById("btn-sospendi").style.display="none";
   setWizMic("idle"); render();
 }
 
@@ -1611,7 +1617,7 @@ function buildEmailBody(){
 }
 function openEmail(){ saveReport(); document.getElementById("eml-input").value=R.emailUfficio||""; document.getElementById("eml-ok").style.display="none"; document.getElementById("ebtn-send").textContent="📤 APRI IN POSTA"; document.getElementById("eml-ov").className="open"; }
 function closeEmail(){ document.getElementById("eml-ov").className=""; }
-function doSendEmail(){ const email=document.getElementById("eml-input").value.trim(); if(!email){alert("Inserisci l'email.");return;} R.emailUfficio=email; const subj=encodeURIComponent(`Rapportino Cantiere – ${R.cantiere||"cantiere"} – ${R.data||""}`); const body=encodeURIComponent(buildEmailBody()); window.location.href=`mailto:${email}?subject=${subj}&body=${body}`; document.getElementById("ebtn-send").textContent="✓ POSTA APERTA"; document.getElementById("eml-ok").style.display="block"; }
+function doSendEmail(){ archiviaRapportino(); const email=document.getElementById("eml-input").value.trim(); if(!email){alert("Inserisci l'email.");return;} R.emailUfficio=email; const subj=encodeURIComponent(`Rapportino Cantiere – ${R.cantiere||"cantiere"} – ${R.data||""}`); const body=encodeURIComponent(buildEmailBody()); window.location.href=`mailto:${email}?subject=${subj}&body=${body}`; document.getElementById("ebtn-send").textContent="✓ POSTA APERTA"; document.getElementById("eml-ok").style.display="block"; }
 
 // STAMPA
 function tbl(ths,rows,foot){ const h=ths.map(x=>`<th>${x}</th>`).join(""); const r=rows.map(r=>`<tr>${r.map(c=>`<td>${esc(String(c||"—"))}</td>`).join("")}</tr>`).join(""); const f=foot?`<tfoot><tr>${foot}</tr></tfoot>`:""; return `<table class="ptbl"><thead><tr>${h}</tr></thead><tbody>${r}</tbody>${f}</table>`; }
@@ -1680,65 +1686,17 @@ function wizRiprendi(){
   setTimeout(()=>wizAsk(), 600);
 }
 
-// Mostra tasto SOSPENDI nell'header quando il wizard è aperto
-const _origStartWizard = startWizard;
-// Patch: mostra btn-sospendi quando il wizard è attivo (non sospeso)
-function startWizard(){
-  _origStartWizard();
-}
-
-// Override openWizMain per mostrare il tasto sospendi
-function showSospendiBtn(show){
-  const b = document.getElementById("btn-sospendi");
-  if(!show){ b.style.display="none"; return; }
-  if(wizSospeso) return; // già in modalità riprendi
-  b.style.display="";
-  b.textContent="⏸ SOSPENDI";
-  b.className="bsospendi";
-}
-
-// Patch closeWizard per nascondere il tasto se non sospeso
-const _origCloseWizard = closeWizard;
-closeWizard = function(){
-  _origCloseWizard();
-  if(!wizSospeso) document.getElementById("btn-sospendi").style.display="none";
-};
-
-// Patch wizBegin per mostrare tasto sospendi
-const _origWizBegin = wizBegin;
-wizBegin = function(){
-  showSospendiBtn(true);
-  _origWizBegin();
-};
-
-// Patch wizFinish per nascondere
-const _origWizFinish = wizFinish;
-wizFinish = function(){
-  document.getElementById("btn-sospendi").style.display="none";
-  wizSospeso=false;
-  try{localStorage.removeItem("rc_wiz_sospeso");}catch(e){}
-  _origWizFinish();
-};
-
-// Archivio rapportino nel calendario al momento dell'invio email o stampa
+// Archivio rapportino nel calendario al momento dell'invio email
 function archiviaRapportino(){
   const key = "rc_cal_" + (R.data||todayStr()).replace(/-/g,"");
   try{
     const existing = JSON.parse(localStorage.getItem(key)||"[]");
     const light={...R, foto_cantiere:[], bolle:R.bolle.map(b=>({...b,foto:[]})), attrezzature:R.attrezzature.map(a=>({...a,foto:[]})), _ts: Date.now()};
-    // evita duplicati (stesso cantiere + data + responsabile)
     const idx = existing.findIndex(r=>r.cantiere===R.cantiere&&r.responsabile===R.responsabile);
     if(idx>=0) existing[idx]=light; else existing.push(light);
     localStorage.setItem(key, JSON.stringify(existing));
   }catch(e){}
 }
-
-// Patcha doSendEmail per archiviare
-const _origDoSendEmail = doSendEmail;
-doSendEmail = function(){
-  archiviaRapportino();
-  _origDoSendEmail();
-};
 
 // ══════════════════════════════════════════════════════
 // CALENDARIO
