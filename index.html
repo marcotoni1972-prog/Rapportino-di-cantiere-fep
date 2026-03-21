@@ -496,6 +496,7 @@ async function onFotoInput(evt, target, id){
   let arr;
   if(target==="cantiere"){ arr=R.foto_cantiere; }
   else if(target==="bolla"){ const b=R.bolle.find(x=>x.id===id); if(!b)return; if(!b.foto)b.foto=[]; arr=b.foto; }
+  else if(target==="lavorazione"){ const l=R.lavorazioni.find(x=>x.id===id); if(!l)return; if(!l.foto)l.foto=[]; arr=l.foto; }
   else if(target==="attrezzatura"){ if(!R.foto_attrezzatura)R.foto_attrezzatura=[]; arr=R.foto_attrezzatura; }
   else return;
   await addFotos(arr, evt.target.files);
@@ -505,6 +506,7 @@ async function onFotoInput(evt, target, id){
 function deleteFoto(target, id, idx){
   if(target==="cantiere"){ R.foto_cantiere.splice(idx,1); }
   else if(target==="bolla"){ const b=R.bolle.find(x=>x.id===id); if(b&&b.foto)b.foto.splice(idx,1); }
+  else if(target==="lavorazione"){ const l=R.lavorazioni.find(x=>x.id===id); if(l&&l.foto)l.foto.splice(idx,1); }
   else if(target==="attrezzatura"){ if(R.foto_attrezzatura)R.foto_attrezzatura.splice(idx,1); }
   render();
 }
@@ -1510,14 +1512,20 @@ function renderOperai(){
 
 function renderLavorazioni(){
   let h=`<h2 class="stitle">⚒️ Lavorazioni del Giorno</h2>`;
+
+  // Tasto foto in evidenza in cima
+  h+=`<div style="margin-bottom:16px;background:rgba(249,115,22,.08);border:2px dashed rgba(249,115,22,.4);border-radius:10px;padding:12px;text-align:center">
+    <div style="font-size:11px;color:#f97316;font-weight:700;letter-spacing:.1em;margin-bottom:8px">📷 FOTO AVANZAMENTO LAVORI</div>
+    ${fotoBlockHtml("cantiere","",R.foto_cantiere,"Scatta o importa foto del cantiere")}
+  </div>`;
+
   if(R.lavorazioni.length===0&&R.operai.length===0){
     h+=`<div style="color:#64748b;font-size:12px;padding:16px;text-align:center">Usa la 🎙 Guida Vocale per compilare le lavorazioni per ogni operaio,<br>oppure aggiungile manualmente qui sotto.</div>`;
   }
-  // Se le lavorazioni sono state create dal wizard (una per operaio), mostra il nome operaio come titolo
   R.lavorazioni.forEach((l,i)=>{
-    const operaio=R.operai[i]; // corrispondenza posizionale wizard
+    if(!l.foto) l.foto=[];
+    const operaio=R.operai[i];
     const titolo=operaio&&operaio.nome ? `⚒️ ${operaio.nome}` : `LAVORAZIONE #${i+1}`;
-    const nomiOperai=R.operai.map(o=>o.nome||"?").filter(Boolean);
     h+=`<div class="card">
       <div class="ch"><span class="clbl">${esc(titolo)}</span><button class="brm" onclick="removeItem('lavorazioni','${l.id}')">✕</button></div>
       ${fld({label:"Descrizione lavorazione",id:`inp-lav-${l.id}-descrizione`,v:l.descrizione,ph:"es. Getto calcestruzzo pilastri piano primo",q:operaio?`Cosa ha fatto ${operaio.nome||"questo operaio"} oggi?`:`Lavorazione ${i+1}: descrizione?`,tgt:`lav:${l.id}:descrizione`})}
@@ -1529,6 +1537,7 @@ function renderLavorazioni(){
         <input type="checkbox" id="chk-${l.id}" ${l.completata?"checked":""} onchange="setIF('lavorazioni','${l.id}','completata',this.checked)"/>
         <label for="chk-${l.id}">COMPLETATA</label>
       </div>
+      ${fotoBlockHtml("lavorazione",l.id,l.foto,"📷 Foto lavorazione")}
     </div>`;
   });
   h+=`<button class="badd" onclick="addItem('lavorazioni')">+ AGGIUNGI LAVORAZIONE</button>`;
