@@ -294,6 +294,7 @@ input[type=file]{display:none;}
       <button class="rabtn" id="ra-print"  onclick="closeRecap();openPrint()">🖨️ STAMPA / PDF</button>
       <button class="rabtn" id="ra-email"  onclick="closeRecap();openEmail()">📧 INVIA ALL'UFFICIO</button>
       <button class="rabtn" id="ra-sheets" onclick="sendToSheets()">📊 INVIA A SHEETS</button>
+      <button class="rabtn" onclick="window.open(SHEETS_DOC_URL,'_blank')" style="background:rgba(22,163,74,.2);border:1px solid rgba(22,163,74,.5);color:#16a34a;">📂 APRI SHEETS</button>
       <button class="rabtn" id="ra-close"  onclick="closeRecap()">✕ TORNA ALL'APP</button>
     </div>
   </div>
@@ -377,6 +378,7 @@ input[type=file]{display:none;}
         <button class="bprint"    onclick="openPrint()">🖨️ STAMPA</button>
         <button class="bemail"    onclick="openEmail()">📧 INVIA</button>
         <button class="bsheets"   onclick="sendToSheets()">📊 SHEETS</button>
+        <button class="bsheets"   onclick="window.open(SHEETS_DOC_URL,'_blank')" style="background:rgba(22,163,74,.2);border:1px solid rgba(22,163,74,.5);">📂 APRI</button>
       </div>
     </div>
   </div>
@@ -1932,6 +1934,7 @@ function closeCalRep(){ document.getElementById("cal-rep-ov").classList.remove("
 // GOOGLE SHEETS
 // ══════════════════════════════════════════════════════
 const SHEETS_URL = "https://script.google.com/macros/s/AKfycbwwoOiRkmP2bgpSlz0spsk1fdSy4GGV9xsG_A5T9QD_GUUQNmMNkjrc-S6gjNY2V_q68w/exec";
+const SHEETS_DOC_URL = "https://docs.google.com/spreadsheets/d/1QSLLeO45tGLvnn8m8_7EVJGqOyq9vYCEkVCUjm55DI4/edit";
 
 async function sendToSheets(){
   if(!R.cantiere){ alert("Inserisci almeno il nome del cantiere prima di inviare."); return; }
