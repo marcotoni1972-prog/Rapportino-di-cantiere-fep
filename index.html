@@ -162,7 +162,9 @@ input[type=file]{display:none;}
 .rabtn{border:none;border-radius:8px;font-family:'Courier New',monospace;font-weight:700;font-size:12px;letter-spacing:.08em;padding:12px 20px;cursor:pointer;}
 #ra-print{background:#f1f5f9;color:#0f172a;}
 #ra-email{background:linear-gradient(135deg,#f97316,#ea580c);color:#fff;}
+#ra-sheets{background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;}
 #ra-close{background:transparent;border:1px solid rgba(100,116,139,.3);color:#64748b;}
+.bsheets{background:linear-gradient(135deg,#16a34a,#15803d);border:none;border-radius:6px;color:#fff;font-size:11px;font-weight:700;padding:6px 14px;box-shadow:0 2px 8px rgba(22,163,74,.4);}
 
 /* ════ EMAIL ════ */
 #eml-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:400;align-items:center;justify-content:center;padding:20px;}
@@ -291,6 +293,7 @@ input[type=file]{display:none;}
     <div id="recap-actions">
       <button class="rabtn" id="ra-print"  onclick="closeRecap();openPrint()">🖨️ STAMPA / PDF</button>
       <button class="rabtn" id="ra-email"  onclick="closeRecap();openEmail()">📧 INVIA ALL'UFFICIO</button>
+      <button class="rabtn" id="ra-sheets" onclick="sendToSheets()">📊 INVIA A SHEETS</button>
       <button class="rabtn" id="ra-close"  onclick="closeRecap()">✕ TORNA ALL'APP</button>
     </div>
   </div>
@@ -373,6 +376,7 @@ input[type=file]{display:none;}
         <button id="btn-save"     class="bsave" onclick="saveReport()">💾 SALVA</button>
         <button class="bprint"    onclick="openPrint()">🖨️ STAMPA</button>
         <button class="bemail"    onclick="openEmail()">📧 INVIA</button>
+        <button class="bsheets"   onclick="sendToSheets()">📊 SHEETS</button>
       </div>
     </div>
   </div>
@@ -1914,6 +1918,51 @@ function openCalRep(idx, dateStr){
 }
 
 function closeCalRep(){ document.getElementById("cal-rep-ov").classList.remove("open"); }
+
+// ══════════════════════════════════════════════════════
+// GOOGLE SHEETS
+// ══════════════════════════════════════════════════════
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbyet86cgCVmyKpVrziIC0YucNp9hs0FZwcaVYZSZ9MxfzVaHhBOrScIgCu34U0yU3nC/exec";
+
+async function sendToSheets(){
+  if(!R.cantiere){ alert("Inserisci almeno il nome del cantiere prima di inviare."); return; }
+
+  const btn  = document.getElementById("ra-sheets");
+  const hbtn = document.querySelector(".bsheets");
+  const setText = t => { if(btn) btn.textContent=t; if(hbtn) hbtn.textContent=t; };
+  setText("⏳ Invio...");
+
+  const payload = {
+    cantiere:     R.cantiere || "",
+    data:         R.data || "",
+    responsabile: R.responsabile || "",
+    nOperai:      R.operai.length,
+    nomiOperai:   R.operai.map(o=>o.nome).filter(Boolean).join(", "),
+    lavorazioni:  R.lavorazioni_libero ||
+                  R.lavorazioni.map(l=>l.descrizione+(l.ore?" ("+l.ore+"h)":"")).filter(Boolean).join(" | "),
+    bolle:        R.bolle.map(b=>[b.numero,b.fornitore,b.materiale].filter(Boolean).join(" — ")).join(" | "),
+    mezzi:        R.mezzi_libero || R.mezzi.map(m=>[m.tipo,m.targa].filter(Boolean).join(" ")).join(", "),
+    attrezzatura: R.attrezzatura_speciale || "",
+    note:         R.note || ""
+  };
+
+  try{
+    const resp = await fetch(SHEETS_URL, {
+      method: "POST",
+      mode:   "no-cors",  // necessario per Apps Script
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify(payload)
+    });
+    // no-cors non permette di leggere la risposta — assumiamo successo
+    archiviaRapportino();
+    setText("✅ INVIATO!");
+    setTimeout(()=>{ if(btn) btn.textContent="📊 INVIA A SHEETS"; if(hbtn) hbtn.textContent="📊 SHEETS"; }, 3000);
+  }catch(e){
+    alert("❌ Errore invio a Sheets: "+e.message);
+    setText("📊 INVIA A SHEETS");
+    if(hbtn) hbtn.textContent="📊 SHEETS";
+  }
+}
 
 (function init(){
   try{ const saved=localStorage.getItem("rc_v4"); if(saved){const p=JSON.parse(saved); R={...freshReport(),...p,data:todayStr()};} }catch(e){}
