@@ -1046,6 +1046,16 @@ function wizBeginCore(){
 function renderStep(){
   if(wizIdx>=wizSteps.length){ wizFinish(); return; }
   const step=wizSteps[wizIdx];
+
+  // Se è la domanda delle ore, aggiorna con il nome reale dell'operaio
+  if(step.t==="__operaio_ore" && step.opId){
+    const op=R.operai.find(x=>x.id===step.opId);
+    if(op && op.nome){
+      step.q=`${op.nome}: quante ore ha lavorato oggi?`;
+      step.lbl=`⏱ ${op.nome} — ore`;
+    }
+  }
+
   document.getElementById("wiz-step").textContent=`DOMANDA ${wizIdx+1} DI ${wizSteps.length}  —  ${step.lbl}`;
   document.getElementById("wiz-q").textContent=step.q;
   setTrans("",true);
